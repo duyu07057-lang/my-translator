@@ -1,0 +1,16 @@
+dist/
+release/
+tests/artifacts/
+*.user
+.env
+.env.*
+!.env.example
+.codex/
+.agents/
+.vs/
+settings.json
+history.json
+*.log
+*.tmp
+*.pfx
+*.p12
