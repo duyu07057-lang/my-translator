@@ -1,0 +1,8 @@
+[
+  {"id":"pdfpig","version":"0.1.11","framework":"net471","sha256":"c7d30df042f22ee9283ae882d59c94d8f6c2d6af2eb9ecdac6a36226053bee01"},
+  {"id":"microsoft.bcl.hashcode","version":"6.0.0","framework":"net462","sha256":"f3b9b2bab0bf8cc717d5fdf6d7aee3ec54e36d9e85bd41347acae161319cbd6b"},
+  {"id":"system.memory","version":"4.6.0","framework":"net462","sha256":"3a10042b350ce9e11a1fdf4370668ccf6a452c6feafcde0a556aaa881614385a"},
+  {"id":"system.buffers","version":"4.6.0","framework":"net462","sha256":"736425805075e8895f066b3960bb1308543f41e2a84baa61d5af6675192afc97"},
+  {"id":"system.numerics.vectors","version":"4.6.0","framework":"net462","sha256":"7ca4b7b964361e647af6f3610c7a8f2d834eb77aa98e25903976431ef444d475"},
+  {"id":"system.runtime.compilerservices.unsafe","version":"6.1.0","framework":"net462","sha256":"372aaaa51707ba6cd2c69b2044382e0f9486c1d50d1c16e8d0e39dccb4c8cc25"}
+]

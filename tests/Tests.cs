@@ -17,9 +17,23 @@ using MyTranslator;
 public sealed class FakeHandler : HttpMessageHandler
 {
     public int Calls;
+    public string LastRequestBody;
     public Func<int, HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> Respond;
-    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
-    { Calls++; return Respond(Calls, request, token); }
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
+    { Calls++; LastRequestBody = await request.Content.ReadAsStringAsync(); return await Respond(Calls, request, token); }
+}
+
+public sealed class ControlledDocumentImporter : IDocumentImporter
+{
+    public readonly ManualResetEventSlim Started = new ManualResetEventSlim();
+    public ImportedDocument Extract(string path, IProgress<DocumentProgress> progress, CancellationToken token)
+    {
+        if (Path.GetFileName(path) == "cancel-import.txt")
+        {
+            Started.Set(); token.WaitHandle.WaitOne(TimeSpan.FromSeconds(10)); token.ThrowIfCancellationRequested();
+        }
+        return new DocumentImporter().Extract(path, progress, token);
+    }
 }
 
 public sealed class InlineProgress : IProgress<TranslationProgress>
@@ -202,7 +216,7 @@ public static class Tests
         using (var stream = File.Create(Path.Combine(artifacts, filename))) encoder.Save(stream);
     }
 
-    static async Task UiTests(MainWindow main)
+    static async Task UiTests(MainWindow main, FakeHandler handler, ControlledDocumentImporter importer)
     {
         await Capture(main, "01-home.png");
         Check(main.Control<FrameworkElement>("OutputPlaceholder").Visibility == Visibility.Visible, "empty output placeholder visible");
@@ -211,6 +225,9 @@ public static class Tests
         main.Control<TextBox>("SourceText").Text = "Hello";
         await main.TranslateAsync();
         Check(main.Control<FrameworkElement>("SettingsPage").Visibility == Visibility.Visible, "UI routes missing key to settings");
+        await main.ImportDocumentAsync(Path.Combine(DocumentTests.FixturePath, "sample.pdf"));
+        Check(handler.Calls == 0 && main.Control<TextBox>("SourceText").Text.Contains("中文提取测试"), "document extraction works locally without an API key");
+        main.ShowPage("Settings");
         main.Control<PasswordBox>("ApiKeyInput").Password = "test-ui-key";
         main.Control<CheckBox>("RememberKey").IsChecked = true;
         Click(main, "SaveSettingsButton");
@@ -250,6 +267,52 @@ public static class Tests
         main.View.Width = 1080; main.View.Height = 740;
         await Capture(main, "06-minimum-size.png");
         Check(main.Control<Button>("TranslateButton").ActualWidth > 100, "UI remains usable at minimum size");
+
+        Click(main, "DocumentNav");
+        main.Control<ComboBox>("SourceBox").SelectedItem = "自动检测";
+        main.Control<ComboBox>("TargetBox").SelectedItem = "简体中文";
+        Check(main.Control<Border>("DocumentPanel").Visibility == Visibility.Visible && main.Control<TextBlock>("PageTitle").Text == "文档翻译", "document navigation opens the import workspace");
+        await Capture(main, "07-document-empty-minimum.png");
+        main.View.Width = 1280; main.View.Height = 840;
+        int callsBefore = handler.Calls;
+        await main.ImportDocumentAsync(Path.Combine(DocumentTests.FixturePath, "sample.pdf"));
+        Check(handler.Calls == callsBefore, "document preview never sends an API request");
+        Check(main.Control<TextBox>("SourceText").Text.Contains("中文提取测试") && main.Control<TextBox>("SourceText").Text.Contains("Second page"), "UI displays complete extracted PDF text");
+        Check(main.Control<TextBlock>("DocumentFileName").Text == "sample.pdf" && main.Control<TextBlock>("DocumentSummary").Text.Contains("2 页"), "UI shows document identity and page count");
+        Check(main.Control<TextBox>("OutputText").Text == "" && !main.Control<TextBox>("SourceText").IsReadOnly, "import clears stale output and allows source review");
+        await Capture(main, "08-document-preview.png");
+        await main.TranslateAsync();
+        Check(handler.Calls == callsBefore + 1 && main.Control<TextBox>("OutputText").Text.Contains("现场可编程门阵列"), "imported document translates through the selected API workflow");
+        Check(handler.LastRequestBody.Contains("Second page") && !handler.LastRequestBody.Contains(DocumentTests.FixturePath.Replace("\\", "\\\\")), "translation submits extracted text without the document path");
+        await Capture(main, "09-document-translated.png");
+        string priorSource = main.Control<TextBox>("SourceText").Text, priorOutput = main.Control<TextBox>("OutputText").Text;
+        await main.ImportDocumentAsync(Path.Combine(DocumentTests.FixturePath, "image-only.pdf"));
+        Check(main.Control<TextBlock>("StatusText").Text.Contains("OCR") && main.Control<TextBox>("SourceText").Text == priorSource && main.Control<TextBox>("OutputText").Text == priorOutput, "failed document import preserves previous editors");
+        var pendingImport = main.ImportDocumentAsync("cancel-import.txt");
+        bool started = await Task.Run(() => importer.Started.Wait(TimeSpan.FromSeconds(5)));
+        Check(started && !main.Control<Button>("SelectDocumentButton").IsEnabled && main.Control<Button>("CancelButton").Content.ToString() == "停止提取", "UI remains responsive and exposes extraction cancellation");
+        Click(main, "CancelButton"); await pendingImport;
+        Check(main.Control<TextBlock>("StatusText").Text.Contains("取消") && main.Control<TextBox>("SourceText").Text == priorSource && main.Control<TextBox>("OutputText").Text == priorOutput, "cancelled document import preserves previous editors");
+        Check(main.Control<Button>("SelectDocumentButton").IsEnabled && main.Control<Button>("TranslateButton").IsEnabled, "cancelled import restores usable controls");
+        await main.ImportDocumentAsync(Path.Combine(DocumentTests.FixturePath, "mixed-pages.pdf"));
+        Check(main.Control<TextBlock>("DocumentWarning").Text.Contains("1 / 3"), "UI persistently warns about PDF pages without text");
+        await main.ImportDocumentAsync(Path.Combine(DocumentTests.FixturePath, "sample.docx"));
+        Check(main.Control<TextBox>("SourceText").Text.Contains("throughput\t吞吐量") && main.Control<TextBox>("SourceText").Text.Contains("Synthetic header"), "UI previews Word tables and headers");
+        main.Control<TextBox>("SourceText").AppendText("\nEdited source");
+        Check(main.Control<TextBlock>("DocumentSummary").Text.Contains("已编辑"), "document metadata marks reviewed source edits");
+        await main.TranslateAsync();
+        DocumentExporter.Save(Path.Combine(DocumentTests.WorkPath, "ui-export.docx"), main.Control<TextBox>("OutputText").Text);
+        Check(new DocumentImporter().Extract(Path.Combine(DocumentTests.WorkPath, "ui-export.docx"), null, CancellationToken.None).Text.Contains("现场可编程门阵列"), "document workflow exports a readable Word translation");
+        main.View.Width = 1080; main.View.Height = 740;
+        await Capture(main, "10-document-minimum-size.png");
+        Check(main.Control<TextBox>("SourceText").ActualHeight > 100 && main.Control<Button>("TranslateButton").ActualWidth > 100, "document workspace fits the minimum supported window");
+        foreach (string fileName in new[] { "sample.txt", "sample.markdown" }) {
+            int previousCalls = handler.Calls;
+            await main.ImportDocumentAsync(Path.Combine(DocumentTests.WorkPath, fileName));
+            Check(handler.Calls == previousCalls, "local preview of " + fileName + " never calls API");
+            await main.TranslateAsync();
+            Check(handler.Calls == previousCalls + 1 && main.Control<TextBlock>("OutputState").Text == "已完成", "end-to-end import and translation of " + fileName);
+        }
     }
 
     [STAThread]
@@ -261,6 +324,7 @@ public static class Tests
         try
         {
             CoreTests().GetAwaiter().GetResult();
+            DocumentTests.Run(artifacts, Check);
             var app = new Application();
             var handler = new FakeHandler { Respond = async (i, request, token) => {
                 string body = await request.Content.ReadAsStringAsync();
@@ -272,10 +336,11 @@ public static class Tests
             using (var client = new TranslationClient(handler, TimeSpan.Zero))
             {
                 string uiProfile = Path.Combine(artifacts, "ui-profile-" + Guid.NewGuid().ToString("N"));
-                var main = new MainWindow(new SettingsStore(uiProfile), client);
+                var importer = new ControlledDocumentImporter();
+                var main = new MainWindow(new SettingsStore(uiProfile), client, importer);
                 main.View.ShowInTaskbar = false;
                 main.View.Loaded += async delegate {
-                    try { await UiTests(main); }
+                    try { await UiTests(main, handler, importer); }
                     catch (Exception ex) { Console.WriteLine(ex); exit = 1; }
                     finally { main.View.Close(); }
                 };

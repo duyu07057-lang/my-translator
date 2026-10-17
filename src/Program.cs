@@ -22,7 +22,7 @@ namespace MyTranslator
             }
             catch (Exception)
             {
-                MessageBox.Show("应用无法启动。请确认系统已安装 .NET Framework 4.8，并尝试重新解压或编译软件。", "译知", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show("应用无法启动。请确认系统已安装 .NET Framework 4.8，程序与附带的 DLL、配置文件位于同一目录。请尝试完整重新解压或编译软件。", "译知", MessageBoxButton.OK, MessageBoxImage.Error);
                 return 1;
             }
         }

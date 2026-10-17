@@ -1,5 +1,6 @@
 dist/
 release/
+packages/
 tests/artifacts/
 *.user
 .env

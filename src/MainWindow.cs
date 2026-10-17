@@ -21,6 +21,7 @@ namespace MyTranslator
         public Window View { get; private set; }
         private readonly SettingsStore store;
         private readonly TranslationClient client;
+        private readonly IDocumentImporter documentImporter;
         private readonly AppSettings settings;
         private readonly List<HistoryEntry> history;
         private CancellationTokenSource cancellation;
@@ -31,6 +32,9 @@ namespace MyTranslator
         private string translatedSource = "";
         private string translatedTarget = "";
         private bool outputComplete;
+        private ImportedDocument loadedDocument;
+        private bool importing;
+        private bool documentMode;
         private static readonly string[] Languages = {
             "简体中文", "繁體中文", "英语", "日语", "韩语", "法语", "德语", "西班牙语", "俄语", "葡萄牙语", "阿拉伯语"
         };
@@ -39,10 +43,13 @@ namespace MyTranslator
         };
         private static readonly string[] Styles = { "准确自然", "严谨学术", "简洁易懂" };
 
-        public MainWindow(SettingsStore store, TranslationClient client)
+        public MainWindow(SettingsStore store, TranslationClient client) : this(store, client, new DocumentImporter()) { }
+
+        public MainWindow(SettingsStore store, TranslationClient client, IDocumentImporter documentImporter)
         {
             this.store = store;
             this.client = client;
+            this.documentImporter = documentImporter;
             settings = store.Load();
             history = store.LoadHistory(settings.SaveHistory);
             using (var stream = typeof(MainWindow).Assembly.GetManifestResourceStream("MainWindow.xaml"))
@@ -63,20 +70,23 @@ namespace MyTranslator
             Label("DataPath").Text = "数据目录：" + store.DirectoryPath;
 
             Click("TranslateNav", delegate { ShowPage("Translate"); });
+            Click("DocumentNav", delegate { ShowPage("Document"); });
             Click("GlossaryNav", delegate { ShowPage("Glossary"); });
             Click("HistoryNav", delegate { ShowPage("History"); });
             Click("SettingsNav", delegate { ShowPage("Settings"); });
             Click("ApiBadge", delegate { ShowPage("Settings"); });
             Click("TermsHint", delegate { ShowPage("Glossary"); });
             Click("TranslateButton", async delegate { await TranslateAsync(); });
-            Click("CancelButton", delegate { if (cancellation != null) { cancellation.Cancel(); Status("正在停止，已完成的译文会保留…", false); } });
+            Click("CancelButton", delegate { if (cancellation != null) { cancellation.Cancel(); Status(importing ? "正在停止文档提取…" : "正在停止，已完成的译文会保留…", false); } });
             Click("CopyButton", delegate { CopyOutput(); });
             Click("ExportButton", delegate { ExportOutput(); });
             Click("PasteButton", delegate { Paste(); });
-            Click("ImportButton", delegate { ImportText(); });
+            Click("ImportButton", async delegate { await SelectDocumentAsync(); });
+            Click("SelectDocumentButton", async delegate { await SelectDocumentAsync(); });
             Click("ClearButton", delegate { Clear(); });
             Click("SwapButton", delegate { Swap(); });
             Click("ExampleButton", delegate {
+                loadedDocument = null; RefreshDocumentInfo();
                 Text("SourceText").Text = "Field-programmable gate arrays (FPGAs) enable low-latency inference at the edge. " +
                     "A nonuniform piecewise linear approximation reduces the hardware cost of nonlinear activation functions while maintaining accuracy.\n\n" +
                     "The accelerator uses fixed-point arithmetic and a pipelined architecture to improve throughput under tight power constraints.";
@@ -111,6 +121,7 @@ namespace MyTranslator
             Text("SourceText").TextChanged += delegate {
                 Control<TextBlock>("SourcePlaceholder").Visibility = String.IsNullOrEmpty(Text("SourceText").Text) ? Visibility.Visible : Visibility.Collapsed;
                 Label("SourceCount").Text = Text("SourceText").Text.Length.ToString("N0") + " 字符";
+                RefreshDocumentInfo();
                 if (!busy && !String.IsNullOrEmpty(translatedSource) && translatedSource != Text("SourceText").Text)
                 {
                     Label("OutputState").Text = "待更新";
@@ -128,7 +139,7 @@ namespace MyTranslator
                 Box(name).SelectionChanged += delegate { if (!initializing) UpdatePreferences(); };
             View.PreviewKeyDown += async delegate(object sender, KeyEventArgs e) {
                 if (e.Key == Key.Enter && (Keyboard.Modifiers & ModifierKeys.Control) != 0)
-                { e.Handled = true; if (!busy) { ShowPage("Translate"); await TranslateAsync(); } }
+                { e.Handled = true; if (!busy) { ShowPage(documentMode ? "Document" : "Translate"); await TranslateAsync(); } }
                 else if (e.Key == Key.F1) { e.Handled = true; ShowPage("Settings"); }
                 else if (e.Key == Key.C && Keyboard.Modifiers == (ModifierKeys.Control | ModifierKeys.Shift))
                 { e.Handled = true; CopyOutput(); }
@@ -137,6 +148,18 @@ namespace MyTranslator
                 closing = true;
                 if (cancellation != null) cancellation.Cancel();
             };
+            View.PreviewDragOver += delegate(object sender, DragEventArgs e) {
+                if (e.Data.GetDataPresent(DataFormats.FileDrop)) { e.Effects = busy ? DragDropEffects.None : DragDropEffects.Copy; e.Handled = true; }
+            };
+            View.PreviewDrop += async delegate(object sender, DragEventArgs e) {
+                if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return;
+                e.Handled = true;
+                if (busy) return;
+                var paths = e.Data.GetData(DataFormats.FileDrop) as string[];
+                if (paths == null || paths.Length != 1) { Status("一次请选择一份文档。", true); return; }
+                await ImportDocumentAsync(paths[0]);
+            };
+            View.AllowDrop = true;
             RefreshTerms(); RefreshHistory(); RefreshBadge();
             Control<Button>("CopyButton").IsEnabled = false;
             Control<Button>("ExportButton").IsEnabled = false;
@@ -159,15 +182,25 @@ namespace MyTranslator
 
         public void ShowPage(string page)
         {
+            if (page == "Document" || page == "Translate") documentMode = page == "Document";
+            string visiblePage = page == "Document" ? "Translate" : page;
             string[] pages = { "Translate", "Glossary", "History", "Settings" };
             string[] names = { "文本翻译", "专业术语", "翻译历史", "API 设置" };
             string[] descriptions = { "自动识别语种，让每一个专业表达准确传达。", "为你的领域建立词汇，让专业表述始终一致。", "回到之前的文字，继续理解与表达。", "连接你的模型，设定自己的翻译工作空间。" };
             for (int i = 0; i < pages.Length; i++)
             {
-                bool active = pages[i] == page;
+                bool active = pages[i] == visiblePage;
                 Control<FrameworkElement>(pages[i] + "Page").Visibility = active ? Visibility.Visible : Visibility.Collapsed;
-                Control<Button>(pages[i] + "Nav").Background = new SolidColorBrush(active ? Color.FromRgb(42, 75, 80) : Colors.Transparent);
+                Control<Button>(pages[i] + "Nav").Background = new SolidColorBrush(active && page != "Document" ? Color.FromRgb(42, 75, 80) : Colors.Transparent);
                 if (active) { Label("PageTitle").Text = names[i]; Label("PageSubtitle").Text = descriptions[i]; Label("Breadcrumb").Text = "工作空间  /  " + names[i]; }
+            }
+            Control<Button>("DocumentNav").Background = new SolidColorBrush(page == "Document" ? Color.FromRgb(42, 75, 80) : Colors.Transparent);
+            Control<Border>("DocumentPanel").Visibility = documentMode ? Visibility.Visible : Visibility.Collapsed;
+            Control<StackPanel>("TextExamples").Visibility = documentMode ? Visibility.Collapsed : Visibility.Visible;
+            Label("DocumentTip").Visibility = documentMode ? Visibility.Visible : Visibility.Collapsed;
+            if (page == "Document") {
+                Label("PageTitle").Text = "文档翻译"; Label("Breadcrumb").Text = "工作空间  /  文档翻译";
+                Label("PageSubtitle").Text = "提取 PDF、Word 和文本内容，预览后翻译为目标语言。";
             }
         }
 
@@ -278,7 +311,7 @@ namespace MyTranslator
         private void ToggleBusy(bool value)
         {
             busy = value;
-            foreach (string name in new[] { "TranslateButton", "SourceBox", "TargetBox", "DomainBox", "StyleBox", "PasteButton", "ImportButton", "ClearButton", "SwapButton", "ExampleButton", "SettingsPage", "RestoreHistoryButton", "GlossaryPage" })
+            foreach (string name in new[] { "TranslateButton", "SelectDocumentButton", "SourceBox", "TargetBox", "DomainBox", "StyleBox", "PasteButton", "ImportButton", "ClearButton", "SwapButton", "ExampleButton", "SettingsPage", "RestoreHistoryButton", "GlossaryPage" })
                 Control<FrameworkElement>(name).IsEnabled = !value;
             Text("SourceText").IsReadOnly = value;
             Control<Button>("CancelButton").Visibility = value ? Visibility.Visible : Visibility.Collapsed;
@@ -296,9 +329,13 @@ namespace MyTranslator
         private void ExportOutput()
         {
             if (String.IsNullOrEmpty(Text("OutputText").Text)) return;
-            var dialog = new SaveFileDialog { Title = "导出译文", FileName = (outputComplete ? "译文-" : "部分译文-") + DateTime.Now.ToString("yyyyMMdd-HHmm"), Filter = "文本文件 (*.txt)|*.txt|Markdown (*.md)|*.md", DefaultExt = ".txt" };
+            string baseName = loadedDocument == null ? "" : Path.GetFileNameWithoutExtension(loadedDocument.FileName) + "-";
+            var dialog = new SaveFileDialog { Title = "导出文字译文（不保留原文档版式）", FileName = baseName + (outputComplete ? "译文-" : "部分译文-") + DateTime.Now.ToString("yyyyMMdd-HHmm"), Filter = "文本文件 (*.txt)|*.txt|Markdown (*.md)|*.md|Word 文档 (*.docx)|*.docx", DefaultExt = ".txt" };
             if (dialog.ShowDialog(View) != true) return;
-            try { File.WriteAllText(dialog.FileName, Text("OutputText").Text, new UTF8Encoding(false)); Status("译文已导出至 " + dialog.FileName, false); }
+            if (loadedDocument != null && String.Equals(Path.GetFullPath(dialog.FileName), loadedDocument.SourcePath, StringComparison.OrdinalIgnoreCase))
+            { Status("请选择新的文件名，以保护导入的原文档。", true); return; }
+            try { DocumentExporter.Save(dialog.FileName, Text("OutputText").Text); Status("译文已导出至 " + dialog.FileName, false); }
+            catch (ArgumentException ex) { Status(ex.Message, true); }
             catch (Exception) { Status("无法写入所选文件，请检查权限或换一个保存位置。", true); }
         }
 
@@ -310,35 +347,78 @@ namespace MyTranslator
                 if (!Clipboard.ContainsText()) { Status("剪贴板中没有文本。", true); return; }
                 string value = Clipboard.GetText();
                 if (value.Length > TranslationText.MaxInputLength) { Status("剪贴板文本超过 100,000 字符，请拆分后粘贴。", true); return; }
-                Text("SourceText").Text = value;
+                loadedDocument = null; RefreshDocumentInfo(); Text("SourceText").Text = value;
             }
             catch (Exception) { Status("暂时无法读取剪贴板，请稍后重试。", true); }
         }
 
-        private void ImportText()
+        private async Task SelectDocumentAsync()
         {
             if (busy) return;
-            var dialog = new OpenFileDialog { Title = "导入 UTF-8 或带 BOM 的 Unicode 文本", Filter = "文本 / Markdown (*.txt;*.md)|*.txt;*.md" };
+            var dialog = new OpenFileDialog { Title = "导入文档并提取文字", Filter = "支持的文档 (*.pdf;*.docx;*.md;*.markdown;*.txt)|*.pdf;*.docx;*.md;*.markdown;*.txt|PDF (*.pdf)|*.pdf|Word (*.docx)|*.docx|Markdown / 文本 (*.md;*.markdown;*.txt)|*.md;*.markdown;*.txt|所有文件 (*.*)|*.*" };
             if (dialog.ShowDialog(View) != true) return;
+            await ImportDocumentAsync(dialog.FileName);
+        }
+
+        public async Task ImportDocumentAsync(string path)
+        {
+            if (busy) return;
+            ShowPage("Document");
+            importing = true;
+            cancellation = new CancellationTokenSource();
+            ToggleBusy(true);
+            Control<Button>("CancelButton").Content = "停止提取";
+            var bar = Control<ProgressBar>("TaskProgress"); bar.IsIndeterminate = true;
+            Status("正在本地提取文字，不会发送文档…", false);
+            var token = cancellation.Token;
+            var progress = new Progress<DocumentProgress>(p => {
+                if (closing || !importing) return;
+                bar.IsIndeterminate = p.Total <= 0;
+                if (p.Total > 0) { bar.Maximum = p.Total; bar.Value = p.Completed; }
+                Status(p.Message, false);
+            });
             try
             {
-                if (new FileInfo(dialog.FileName).Length > 4 * 1024 * 1024) { Status("文件过大，请导入不超过 100,000 字符的文本。", true); return; }
-                string value;
-                using (var reader = new StreamReader(dialog.FileName, new UTF8Encoding(false, true), true)) value = reader.ReadToEnd();
-                if (value.Length > TranslationText.MaxInputLength) { Status("文件超过 100,000 字符，请拆分后导入。", true); return; }
-                Text("SourceText").Text = value; Status("已导入 " + Path.GetFileName(dialog.FileName), false);
+                var document = await Task.Run(() => documentImporter.Extract(path, progress, token), token);
+                token.ThrowIfCancellationRequested();
+                if (closing) return;
+                // Commit only after successful extraction; failures/cancellation preserve the editors.
+                loadedDocument = document;
+                Text("OutputText").Clear(); translatedSource = ""; translatedTarget = ""; detectedLanguage = ""; outputComplete = false;
+                Label("OutputState").Text = "译文"; Label("DetectedText").Text = "翻译时识别";
+                Text("SourceText").Text = document.Text;
+                RefreshDocumentInfo();
+                ShowPage("Document");
+                Status("已导入 " + document.FileName + " · 请预览提取文字，选择目标语言后点击开始翻译。", false);
             }
-            catch (DecoderFallbackException) { Status("文件不是 UTF-8 文本，请先在记事本中另存为 UTF-8 后导入。", true); }
-            catch (Exception) { Status("无法读取文件，请检查文件权限或文件是否被占用。", true); }
+            catch (OperationCanceledException) { if (!closing) Status("文档提取已取消，原有编辑内容未改变。", false); }
+            catch (DocumentImportException ex) { if (!closing) Status(ex.Message, true); }
+            catch (Exception) { if (!closing) Status("无法提取该文档，请检查格式、文件权限或文档是否损坏。", true); }
+            finally {
+                importing = false; cancellation.Dispose(); cancellation = null;
+                if (!closing) { ToggleBusy(false); bar.IsIndeterminate = false; Control<Button>("CancelButton").Content = "停止翻译"; }
+            }
+        }
+
+        private void RefreshDocumentInfo()
+        {
+            Label("DocumentFileName").Text = loadedDocument == null ? "选择或拖入一份文档" : loadedDocument.FileName;
+            Label("DocumentFileName").ToolTip = loadedDocument == null ? null : loadedDocument.SourcePath;
+            Label("DocumentSummary").Text = loadedDocument == null ? "PDF · Word (.docx) · Markdown · TXT" :
+                loadedDocument.Summary + (Text("SourceText").Text == loadedDocument.Text ? "" : " · 提取内容已编辑");
+            Label("DocumentWarning").Text = loadedDocument == null ? "先在本地提取文字，预览确认后点击翻译。扫描 PDF 请先 OCR；不还原原文档版式。" :
+                String.IsNullOrEmpty(loadedDocument.Warning) ? "文字已在本地提取，可以编辑；点击开始翻译后才会提交给 DeepSeek。" : loadedDocument.Warning;
         }
 
         private void Clear()
         {
             if (busy) return;
+            loadedDocument = null;
             Text("SourceText").Clear(); Text("OutputText").Clear();
             detectedLanguage = ""; translatedSource = ""; translatedTarget = "";
             outputComplete = false; Label("OutputState").Text = "译文";
             Label("DetectedText").Text = "翻译时识别"; Status("编辑区已清空", false);
+            RefreshDocumentInfo();
         }
 
         private void Swap()
@@ -386,7 +466,7 @@ namespace MyTranslator
             if (busy) { Status("请等待当前翻译结束后打开记录。", true); return; }
             var entry = Control<ListBox>("HistoryList").SelectedItem as HistoryEntry;
             if (entry == null) { Status("请先选中一条翻译记录。", true); return; }
-            Text("SourceText").Text = entry.Source;
+            loadedDocument = null; RefreshDocumentInfo(); Text("SourceText").Text = entry.Source;
             Text("OutputText").Text = entry.Translation;
             detectedLanguage = entry.SourceLanguage; translatedSource = entry.Source; translatedTarget = entry.TargetLanguage;
             outputComplete = true; Label("OutputState").Text = "已完成";

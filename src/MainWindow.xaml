@@ -95,6 +95,7 @@
         <StackPanel Grid.Row="1">
           <TextBlock Text="工作空间" FontSize="11" Foreground="#83A3A6" Margin="16,0,0,10"/>
           <Button x:Name="TranslateNav" Style="{StaticResource Nav}" Content="文 本 翻 译" Background="#2A4B50" Foreground="White"/>
+          <Button x:Name="DocumentNav" Style="{StaticResource Nav}" Content="文 档 翻 译"/>
           <Button x:Name="GlossaryNav" Style="{StaticResource Nav}" Content="专 业 术 语"/>
           <Button x:Name="HistoryNav" Style="{StaticResource Nav}" Content="翻 译 历 史"/>
         </StackPanel>
@@ -103,7 +104,7 @@
             <StackPanel><TextBlock Text="为专业表达而设计" Foreground="#C8E4DB" FontSize="12"/><TextBlock Text="论文 · 技术 · 日常文本" Foreground="#91B3B4" FontSize="10" Margin="0,7,0,0"/></StackPanel>
           </Border>
           <Button x:Name="SettingsNav" Style="{StaticResource Nav}" Content="API 设 置"/>
-          <TextBlock Text="v1.0  /  Powered by DeepSeek" Foreground="#779A9C" FontSize="9" HorizontalAlignment="Center" Margin="0,17,0,0"/>
+          <TextBlock Text="v1.1  /  Powered by DeepSeek" Foreground="#779A9C" FontSize="9" HorizontalAlignment="Center" Margin="0,17,0,0"/>
         </StackPanel>
       </Grid>
     </Border>
@@ -119,8 +120,20 @@
       </Grid>
 
       <Grid x:Name="TranslatePage" Grid.Row="1">
-        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-        <Border Style="{StaticResource Card}" Padding="17,13" Margin="0,0,0,16">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <Border x:Name="DocumentPanel" Grid.Row="0" Style="{StaticResource Card}" Padding="17,14" Margin="0,0,0,14" Visibility="Collapsed" AllowDrop="True">
+          <StackPanel>
+            <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+              <StackPanel Margin="0,0,16,0">
+                <TextBlock x:Name="DocumentFileName" Text="选择或拖入一份文档" FontSize="15" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                <TextBlock x:Name="DocumentSummary" Text="PDF · Word (.docx) · Markdown · TXT" Foreground="#748D92" FontSize="11" Margin="0,7,0,0"/>
+              </StackPanel>
+              <Button x:Name="SelectDocumentButton" Grid.Column="1" Content="选择文档" Style="{StaticResource Primary}" VerticalAlignment="Center" Padding="17,10"/>
+            </Grid>
+            <TextBlock x:Name="DocumentWarning" Text="先在本地提取文字，预览确认后点击翻译。扫描 PDF 请先 OCR；不还原原文档版式。" Foreground="#8A7957" FontSize="11" Margin="0,10,0,0" TextWrapping="Wrap"/>
+          </StackPanel>
+        </Border>
+        <Border Grid.Row="1" Style="{StaticResource Card}" Padding="17,13" Margin="0,0,0,16">
           <Grid>
             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="200"/><ColumnDefinition Width="30"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="160"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
             <TextBlock Text="专业领域" VerticalAlignment="Center" Margin="0,0,13,0" Foreground="#657F84"/>
@@ -130,7 +143,7 @@
             <Button x:Name="TermsHint" Grid.Column="5" Content="管理术语 →" HorizontalAlignment="Right" Background="Transparent" BorderThickness="0" Foreground="#16796D"/>
           </Grid>
         </Border>
-        <Grid Grid.Row="1">
+        <Grid Grid.Row="2">
           <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="16"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
           <Border Style="{StaticResource Card}">
             <Grid>
@@ -146,7 +159,7 @@
                 <TextBlock x:Name="SourcePlaceholder" Text="输入或粘贴需要翻译的文本…&#10;&#10;支持论文段落、技术文档和日常表达。" FontSize="15" Foreground="#9AABAF" Margin="15,16" IsHitTestVisible="False" TextWrapping="Wrap" LineHeight="26"/>
               </Grid>
               <Border Grid.Row="2" BorderBrush="#EDF1F2" BorderThickness="0,1,0,0" Padding="12,10">
-                <Grid><StackPanel Orientation="Horizontal"><Button x:Name="PasteButton" Content="粘贴" Padding="11,6"/><Button x:Name="ImportButton" Content="导入文本" Padding="11,6" Margin="7,0,0,0"/><Button x:Name="ClearButton" Content="清空" Padding="10,6" Margin="7,0,0,0" BorderThickness="0"/></StackPanel><TextBlock x:Name="SourceCount" Text="0 字符" Style="{StaticResource Muted}" HorizontalAlignment="Right" VerticalAlignment="Center"/></Grid>
+                <Grid><StackPanel Orientation="Horizontal"><Button x:Name="PasteButton" Content="粘贴" Padding="11,6"/><Button x:Name="ImportButton" Content="导入文档" Padding="11,6" Margin="7,0,0,0"/><Button x:Name="ClearButton" Content="清空" Padding="10,6" Margin="7,0,0,0" BorderThickness="0"/></StackPanel><TextBlock x:Name="SourceCount" Text="0 字符" Style="{StaticResource Muted}" HorizontalAlignment="Right" VerticalAlignment="Center"/></Grid>
               </Border>
             </Grid>
           </Border>
@@ -170,10 +183,11 @@
             </Grid>
           </Border>
         </Grid>
-        <Grid Grid.Row="2" Margin="0,18,0,0">
+        <Grid Grid.Row="3" Margin="0,18,0,0">
           <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
           <Grid>
-            <StackPanel Orientation="Horizontal" VerticalAlignment="Center"><TextBlock Text="试一试" Style="{StaticResource Muted}" VerticalAlignment="Center" Margin="0,0,10,0"/><Button x:Name="ExampleButton" Content="电子工程示例" Padding="11,7" Background="#EBF1F2" BorderThickness="0"/></StackPanel>
+            <StackPanel x:Name="TextExamples" Orientation="Horizontal" VerticalAlignment="Center"><TextBlock Text="试一试" Style="{StaticResource Muted}" VerticalAlignment="Center" Margin="0,0,10,0"/><Button x:Name="ExampleButton" Content="电子工程示例" Padding="11,7" Background="#EBF1F2" BorderThickness="0"/></StackPanel>
+            <TextBlock x:Name="DocumentTip" Text="本地提取 · 预览原文 · 选择目标语言后翻译" Foreground="#748D92" FontSize="11" VerticalAlignment="Center" Visibility="Collapsed"/>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"><Button x:Name="CancelButton" Content="停止翻译" Visibility="Collapsed" Margin="0,0,10,0"/><Button x:Name="TranslateButton" Style="{StaticResource Primary}" Content="开始翻译    ↵" Width="164" Height="44" ToolTip="Ctrl + Enter"/></StackPanel>
           </Grid>
           <ProgressBar x:Name="TaskProgress" Grid.Row="1" Height="3" Margin="0,12,0,0" Foreground="#16796D" Background="#E5EDEE" Visibility="Collapsed"/>
