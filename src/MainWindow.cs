@@ -112,6 +112,8 @@ namespace MyTranslator
             });
             Click("RestoreHistoryButton", delegate { RestoreHistory(); });
             Control<ListBox>("HistoryList").MouseDoubleClick += delegate { RestoreHistory(); };
+            Control<ListBox>("HistoryList").SelectionChanged += delegate { UpdateSelectionActions(); };
+            Control<DataGrid>("TermsGrid").SelectionChanged += delegate { UpdateSelectionActions(); };
             Click("ClearHistoryButton", delegate {
                 if (history.Count == 0) { Status("历史记录已经为空。", false); return; }
                 if (MessageBox.Show(View, "清空所有翻译历史？此操作不会清除当前编辑区的文本。", "清空历史", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
@@ -119,7 +121,7 @@ namespace MyTranslator
             });
 
             Text("SourceText").TextChanged += delegate {
-                Control<TextBlock>("SourcePlaceholder").Visibility = String.IsNullOrEmpty(Text("SourceText").Text) ? Visibility.Visible : Visibility.Collapsed;
+                RefreshSourcePlaceholder();
                 Label("SourceCount").Text = Text("SourceText").Text.Length.ToString("N0") + " 字符";
                 RefreshDocumentInfo();
                 if (!busy && !String.IsNullOrEmpty(translatedSource) && translatedSource != Text("SourceText").Text)
@@ -128,6 +130,8 @@ namespace MyTranslator
                     Status("原文已更改，当前译文对应上一次翻译。", false);
                 }
             };
+            Text("SourceText").GotKeyboardFocus += delegate { RefreshSourcePlaceholder(); };
+            Text("SourceText").LostKeyboardFocus += delegate { RefreshSourcePlaceholder(); };
             Text("OutputText").TextChanged += delegate {
                 bool empty = String.IsNullOrEmpty(Text("OutputText").Text);
                 Control<StackPanel>("OutputPlaceholder").Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
@@ -161,6 +165,7 @@ namespace MyTranslator
             };
             View.AllowDrop = true;
             RefreshTerms(); RefreshHistory(); RefreshBadge();
+            ShowPage("Translate");
             Control<Button>("CopyButton").IsEnabled = false;
             Control<Button>("ExportButton").IsEnabled = false;
             initializing = false;
@@ -191,10 +196,10 @@ namespace MyTranslator
             {
                 bool active = pages[i] == visiblePage;
                 Control<FrameworkElement>(pages[i] + "Page").Visibility = active ? Visibility.Visible : Visibility.Collapsed;
-                Control<Button>(pages[i] + "Nav").Background = new SolidColorBrush(active && page != "Document" ? Color.FromRgb(42, 75, 80) : Colors.Transparent);
+                SetActiveNavigation(pages[i] + "Nav", active && page != "Document");
                 if (active) { Label("PageTitle").Text = names[i]; Label("PageSubtitle").Text = descriptions[i]; Label("Breadcrumb").Text = "工作空间  /  " + names[i]; }
             }
-            Control<Button>("DocumentNav").Background = new SolidColorBrush(page == "Document" ? Color.FromRgb(42, 75, 80) : Colors.Transparent);
+            SetActiveNavigation("DocumentNav", page == "Document");
             Control<Border>("DocumentPanel").Visibility = documentMode ? Visibility.Visible : Visibility.Collapsed;
             Control<StackPanel>("TextExamples").Visibility = documentMode ? Visibility.Collapsed : Visibility.Visible;
             Label("DocumentTip").Visibility = documentMode ? Visibility.Visible : Visibility.Collapsed;
@@ -204,15 +209,29 @@ namespace MyTranslator
             }
         }
 
+        private void SetActiveNavigation(string name, bool active)
+        {
+            var button = Control<Button>(name);
+            button.Style = (Style)View.FindResource(active ? "NavActive" : "Nav");
+            System.Windows.Automation.AutomationProperties.SetItemStatus(button, active ? "当前页面" : "");
+        }
+
+        private void RefreshSourcePlaceholder()
+        {
+            Control<TextBlock>("SourcePlaceholder").Visibility =
+                String.IsNullOrEmpty(Text("SourceText").Text) && !Text("SourceText").IsKeyboardFocused
+                ? Visibility.Visible : Visibility.Collapsed;
+        }
+
         private void Status(string value, bool error)
         {
             Label("StatusText").Text = value;
-            Label("StatusText").Foreground = new SolidColorBrush(error ? Color.FromRgb(177, 75, 61) : Color.FromRgb(100, 130, 135));
+            Label("StatusText").Foreground = (Brush)View.FindResource(error ? "Danger" : "Secondary");
         }
 
         private void RefreshBadge()
         {
-            Control<Button>("ApiBadge").Content = String.IsNullOrWhiteSpace(settings.ApiKey) ? "●  待配置 API" : "●  API 已配置";
+            Control<Button>("ApiBadge").Content = String.IsNullOrWhiteSpace(settings.ApiKey) ? "待配置 API" : "API 已配置";
         }
 
         private bool Persist(string success)
@@ -300,7 +319,7 @@ namespace MyTranslator
                 cancellation.Dispose(); cancellation = null;
                 if (!closing) {
                     ToggleBusy(false);
-                    if (!outputComplete) Label("OutputState").Text = Text("OutputText").Text.Length > 0 ? "部分译文" : "译文";
+                    if (!outputComplete) Label("OutputState").Text = Text("OutputText").Text.Length > 0 ? "部分译文" : "待翻译";
                     if (String.IsNullOrEmpty(detectedLanguage)) Label("DetectedText").Text = "尚未识别";
                 }
             }
@@ -316,7 +335,8 @@ namespace MyTranslator
             Text("SourceText").IsReadOnly = value;
             Control<Button>("CancelButton").Visibility = value ? Visibility.Visible : Visibility.Collapsed;
             Control<ProgressBar>("TaskProgress").Visibility = value ? Visibility.Visible : Visibility.Collapsed;
-            Control<Button>("TranslateButton").Content = value ? "正在翻译…" : "开始翻译    ↵";
+            Control<Button>("TranslateButton").Content = value ? "正在翻译…" : "开始翻译";
+            UpdateSelectionActions();
         }
 
         private void CopyOutput()
@@ -385,7 +405,7 @@ namespace MyTranslator
                 // Commit only after successful extraction; failures/cancellation preserve the editors.
                 loadedDocument = document;
                 Text("OutputText").Clear(); translatedSource = ""; translatedTarget = ""; detectedLanguage = ""; outputComplete = false;
-                Label("OutputState").Text = "译文"; Label("DetectedText").Text = "翻译时识别";
+                Label("OutputState").Text = "待翻译"; Label("DetectedText").Text = "翻译时识别";
                 Text("SourceText").Text = document.Text;
                 RefreshDocumentInfo();
                 ShowPage("Document");
@@ -408,6 +428,9 @@ namespace MyTranslator
                 loadedDocument.Summary + (Text("SourceText").Text == loadedDocument.Text ? "" : " · 提取内容已编辑");
             Label("DocumentWarning").Text = loadedDocument == null ? "先在本地提取文字，预览确认后点击翻译。扫描 PDF 请先 OCR；不还原原文档版式。" :
                 String.IsNullOrEmpty(loadedDocument.Warning) ? "文字已在本地提取，可以编辑；点击开始翻译后才会提交给 DeepSeek。" : loadedDocument.Warning;
+            bool warning = loadedDocument != null && (loadedDocument.PagesWithoutText > 0 ||
+                (!String.IsNullOrEmpty(loadedDocument.Warning) && (loadedDocument.Warning.Contains("图片") || loadedDocument.Warning.Contains("公式"))));
+            Label("DocumentWarning").Foreground = (Brush)View.FindResource(warning ? "Warning" : "Secondary");
         }
 
         private void Clear()
@@ -416,7 +439,7 @@ namespace MyTranslator
             loadedDocument = null;
             Text("SourceText").Clear(); Text("OutputText").Clear();
             detectedLanguage = ""; translatedSource = ""; translatedTarget = "";
-            outputComplete = false; Label("OutputState").Text = "译文";
+            outputComplete = false; Label("OutputState").Text = "待翻译";
             Label("DetectedText").Text = "翻译时识别"; Status("编辑区已清空", false);
             RefreshDocumentInfo();
         }
@@ -453,12 +476,25 @@ namespace MyTranslator
             else if (settings.Glossary.Count < 500) settings.Glossary.Add(new GlossaryEntry { Source = source, Target = target, Language = language, Domain = domain });
         }
 
-        private void RefreshTerms() { Control<DataGrid>("TermsGrid").ItemsSource = settings.Glossary.ToArray(); }
+        private void RefreshTerms()
+        {
+            Control<DataGrid>("TermsGrid").ItemsSource = settings.Glossary.ToArray();
+            Label("TermsCount").Text = "共 " + settings.Glossary.Count + " 条";
+            UpdateSelectionActions();
+        }
         private void RefreshHistory()
         {
             Control<ListBox>("HistoryList").ItemsSource = history.ToArray();
             Label("HistoryEmpty").Visibility = history.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
             Label("HistoryNote").Text = settings.SaveHistory ? "已开启本地历史保存，最多保留最近 50 条记录。" : "默认仅保留本次会话的记录。可在 API 设置中开启本地历史保存。";
+            UpdateSelectionActions();
+        }
+
+        private void UpdateSelectionActions()
+        {
+            Control<Button>("DeleteTermButton").IsEnabled = !busy && Control<DataGrid>("TermsGrid").SelectedItem != null;
+            Control<Button>("RestoreHistoryButton").IsEnabled = !busy && Control<ListBox>("HistoryList").SelectedItem != null;
+            Control<Button>("ClearHistoryButton").IsEnabled = history.Count > 0;
         }
 
         private void RestoreHistory()

@@ -4,7 +4,7 @@ $exePath = Join-Path $taskRoot 'dist\MyTranslator.exe'
 $runtimeManifestPath = Join-Path $taskRoot 'dist\runtime-dependencies.json'
 if (-not (Test-Path -LiteralPath $exePath) -or -not (Test-Path -LiteralPath $runtimeManifestPath)) { & (Join-Path $taskRoot 'build.ps1') }
 $releaseRoot = Join-Path $taskRoot 'release'
-$packageRoot = Join-Path $releaseRoot 'MyTranslator-Windows-v1.1.0'
+$packageRoot = Join-Path $releaseRoot 'MyTranslator-Windows-v1.1.1'
 New-Item -ItemType Directory -Path $packageRoot -Force | Out-Null
 Copy-Item -LiteralPath $exePath -Destination (Join-Path $packageRoot 'MyTranslator.exe') -Force
 Copy-Item -LiteralPath ($exePath + '.config') -Destination (Join-Path $packageRoot 'MyTranslator.exe.config') -Force
@@ -28,6 +28,6 @@ foreach ($licenseName in @('PdfPig-LICENSE.txt', 'PdfPig-NOTICES.txt', 'Microsof
     Copy-Item -LiteralPath (Join-Path $taskRoot ('third_party\licenses\' + $licenseName)) -Destination (Join-Path $packageLicenses $licenseName) -Force
 }
 Set-Content -LiteralPath (Join-Path $packageRoot 'Start.cmd') -Encoding Ascii -Value '@echo off', 'start "" "%~dp0MyTranslator.exe"'
-$zipPath = Join-Path $releaseRoot 'MyTranslator-Windows-v1.1.0.zip'
+$zipPath = Join-Path $releaseRoot 'MyTranslator-Windows-v1.1.1.zip'
 Compress-Archive -LiteralPath $packageRoot -DestinationPath $zipPath -Force
 Write-Host ('Packaged: ' + $zipPath)

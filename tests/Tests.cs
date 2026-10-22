@@ -206,22 +206,49 @@ public static class Tests
     static void Click(MainWindow main, string name)
     { main.Control<Button>(name).RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); }
 
-    static async Task Capture(MainWindow main, string filename)
+    static async Task Capture(MainWindow main, string filename, int dpi = 96)
     {
         await main.View.Dispatcher.InvokeAsync(delegate { main.View.UpdateLayout(); }, DispatcherPriority.ApplicationIdle);
         var content = (FrameworkElement)main.View.Content;
-        var bitmap = new RenderTargetBitmap((int)content.ActualWidth, (int)content.ActualHeight, 96, 96, PixelFormats.Pbgra32);
+        var bitmap = new RenderTargetBitmap((int)Math.Ceiling(content.ActualWidth * dpi / 96.0), (int)Math.Ceiling(content.ActualHeight * dpi / 96.0), dpi, dpi, PixelFormats.Pbgra32);
         bitmap.Render(content);
         var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap));
         using (var stream = File.Create(Path.Combine(artifacts, filename))) encoder.Save(stream);
+    }
+
+    static bool Inside(FrameworkElement child, FrameworkElement parent)
+    {
+        var position = child.TransformToAncestor(parent).Transform(new Point(0, 0));
+        return position.X >= -1 && position.Y >= -1 &&
+            position.X + child.ActualWidth <= parent.ActualWidth + 1 &&
+            position.Y + child.ActualHeight <= parent.ActualHeight + 1;
+    }
+
+    static T Descendant<T>(DependencyObject parent) where T : DependencyObject
+    {
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
+        {
+            var child = VisualTreeHelper.GetChild(parent, i);
+            if (child is T) return (T)child;
+            var nested = Descendant<T>(child);
+            if (nested != null) return nested;
+        }
+        return null;
     }
 
     static async Task UiTests(MainWindow main, FakeHandler handler, ControlledDocumentImporter importer)
     {
         await Capture(main, "01-home.png");
         Check(main.Control<FrameworkElement>("OutputPlaceholder").Visibility == Visibility.Visible, "empty output placeholder visible");
+        main.View.Activate();
+        main.Control<Button>("TranslateButton").Focus();
+        await Capture(main, "11-keyboard-focus.png");
+        Check(Inside(main.Control<Button>("TranslateButton"), main.Control<FrameworkElement>("TranslatePage")), "primary action remains visible when focused");
         Click(main, "TranslateButton");
         Check(main.Control<TextBlock>("StatusText").Text.Contains("输入"), "UI prevents empty translation");
+        Check(main.Control<TextBlock>("SourcePlaceholder").Visibility == Visibility.Collapsed, "empty editor hint clears when caret enters");
+        main.Control<Button>("TranslateButton").Focus();
+        Check(main.Control<TextBlock>("SourcePlaceholder").Visibility == Visibility.Visible, "empty editor hint returns when focus leaves");
         main.Control<TextBox>("SourceText").Text = "Hello";
         await main.TranslateAsync();
         Check(main.Control<FrameworkElement>("SettingsPage").Visibility == Visibility.Visible, "UI routes missing key to settings");
@@ -233,12 +260,31 @@ public static class Tests
         Click(main, "SaveSettingsButton");
         Check(main.Control<Button>("ApiBadge").Content.ToString().Contains("已配置"), "UI saves configuration");
         await Capture(main, "02-settings.png");
+        main.View.Width = 1080; main.View.Height = 740;
+        await Capture(main, "12-settings-minimum.png");
+        var settingsPage = main.Control<FrameworkElement>("SettingsPage");
+        var saveSettings = main.Control<Button>("SaveSettingsButton");
+        Check(Inside(saveSettings, settingsPage) && saveSettings.ActualHeight >= 40, "settings save action fits the minimum window");
+        var dataPath = main.Control<TextBlock>("DataPath");
+        string originalPath = dataPath.Text;
+        dataPath.Text = "测试长路径：" + String.Join("\\", Enumerable.Repeat("section", 100));
+        var settingsScroll = Descendant<ScrollViewer>(settingsPage);
+        await main.View.Dispatcher.InvokeAsync(delegate { main.View.UpdateLayout(); }, DispatcherPriority.ApplicationIdle);
+        settingsScroll.ScrollToBottom();
+        await Capture(main, "13-settings-scrolled.png");
+        Check(settingsScroll.VerticalOffset > 0 && Inside(saveSettings, settingsPage), "settings save action stays visible while content scrolls");
+        dataPath.Text = originalPath;
+        settingsScroll.ScrollToTop();
+        main.View.Width = 1280; main.View.Height = 840;
         main.ShowPage("Glossary"); Click(main, "SeedTermsButton");
         Check(main.Control<DataGrid>("TermsGrid").Items.Count == 4, "UI adds example terminology");
         main.Control<TextBox>("TermSource").Text = "inference";
         main.Control<TextBox>("TermTarget").Text = "推理";
         Click(main, "AddTermButton");
         Check(main.Control<DataGrid>("TermsGrid").Items.Count == 5, "UI adds custom terminology");
+        Check(!main.Control<Button>("DeleteTermButton").IsEnabled, "term deletion requires a selected row");
+        main.Control<DataGrid>("TermsGrid").SelectedIndex = 0;
+        Check(main.Control<Button>("DeleteTermButton").IsEnabled, "term deletion becomes available for a selected row");
         await Capture(main, "03-glossary.png");
         main.ShowPage("Translate"); Click(main, "ExampleButton");
         var operation = main.TranslateAsync();
@@ -250,8 +296,10 @@ public static class Tests
         await Capture(main, "04-translated.png");
         main.ShowPage("History");
         Check(main.Control<ListBox>("HistoryList").Items.Count == 1, "UI records completed translation");
+        Check(!main.Control<Button>("RestoreHistoryButton").IsEnabled, "history restore requires a selected record");
         await Capture(main, "05-history.png");
         main.Control<ListBox>("HistoryList").SelectedIndex = 0;
+        Check(main.Control<Button>("RestoreHistoryButton").IsEnabled, "history restore becomes available for a selected record");
         Click(main, "RestoreHistoryButton");
         Check(main.Control<FrameworkElement>("TranslatePage").Visibility == Visibility.Visible, "UI restores history to translator");
         Click(main, "SwapButton");
@@ -263,6 +311,10 @@ public static class Tests
         Check(main.Control<Button>("TranslateButton").IsEnabled && main.Control<TextBlock>("StatusText").Text.Contains("已停止"), "UI cancellation leaves usable controls");
         Click(main, "ClearButton");
         Check(main.Control<TextBox>("SourceText").Text == "" && main.Control<TextBox>("OutputText").Text == "", "UI clear resets editors");
+        main.View.Width = 1600; main.View.Height = 1000;
+        await Capture(main, "14-wide-window.png");
+        await Capture(main, "15-wide-window-144dpi.png", 144);
+        Check(main.Control<TextBox>("SourceText").ActualWidth > 500 && main.Control<TextBox>("OutputText").ActualWidth > 500 && Inside(main.Control<Button>("TranslateButton"), main.Control<FrameworkElement>("TranslatePage")), "wide workspace keeps both editors and primary action usable");
         // Render at the minimum supported size to catch clipped controls.
         main.View.Width = 1080; main.View.Height = 740;
         await Capture(main, "06-minimum-size.png");

@@ -20,7 +20,9 @@
 
 运行环境：Windows 10 / 11，安装 [.NET Framework 4.8](https://dotnet.microsoft.com/download/dotnet-framework/net48)。EXE 为便携版，无需安装 Python、Node.js 或开发 SDK。请完整解压，保留 EXE 同目录的配置和全部 DLL，不能只复制 EXE。
 
-新版便携包文件名为 `MyTranslator-Windows-v1.1.0.zip`。也可以按下方步骤从源码构建，构建后直接运行 `dist\MyTranslator.exe`，或双击源码根目录中的 `启动翻译软件.cmd`。
+新版便携包文件名为 `MyTranslator-Windows-v1.1.1.zip`。也可以按下方步骤从源码构建，构建后直接运行 `dist\MyTranslator.exe`，或双击源码根目录中的 `启动翻译软件.cmd`。
+
+界面采用左右对照的原文、译文阅读区；文档翻译页会显示文件信息和提取提醒。键盘操作可看到焦点，设置页的「保存设置」固定在底部，在最小窗口和滚动内容时仍可使用。
 
 ## 已有功能
 
@@ -133,7 +135,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 
 构建直接使用 Windows 自带的 .NET Framework C# 编译器，无需安装 NuGet CLI、npm 或 .NET SDK。首次构建会通过 `restore-dependencies.ps1` 从 NuGet 官方源下载固定版本的 PdfPig 及 .NET 依赖，校验 `dependencies.lock.json` 中的 SHA-256，再复制所需 DLL。后续可使用本地 `packages/` 缓存离线构建。程序不需要管理员权限，构建不修改系统配置。
 
-构建完成后运行 `.\package.ps1`，可以重新生成包含 EXE、依赖 DLL、运行配置、启动脚本、使用说明、界面截图和第三方许可证的便携 ZIP。包输出至 `release\MyTranslator-Windows-v1.1.0.zip`。第三方组件见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+构建完成后运行 `.\package.ps1`，可以重新生成包含 EXE、依赖 DLL、运行配置、启动脚本、使用说明、界面截图和第三方许可证的便携 ZIP。包输出至 `release\MyTranslator-Windows-v1.1.1.zip`。第三方组件见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 ```text
 src/
@@ -160,7 +162,7 @@ dist/
 .\build.ps1 -Test
 ```
 
-当前版本已在本地通过 **118 项检查**。除已有的翻译、术语、认证、重试、取消、DPAPI 和历史检查外，还覆盖 PDF 中英文与多页提取、混合扫描页面提醒、加密和损坏文档、Word 表格和注释文字、文档提取取消、失败保留原文、离线预览，以及四种文档导入后调用模拟 API 完成翻译的实际窗口流程。
+当前版本已在本地通过 **128 项检查**。除已有的翻译、术语、认证、重试、取消、DPAPI 和历史检查外，还覆盖 PDF 中英文与多页提取、混合扫描页面提醒、加密和损坏文档、Word 表格和注释文字、文档提取取消、失败保留原文、离线预览，以及四种文档导入后调用模拟 API 完成翻译的实际窗口流程。界面检查覆盖键盘焦点、操作按钮状态、设置页滚动、最小与宽窗口，并生成 144 DPI 渲染图供人工检查。
 
 测试中的 PDF / DOCX 样本是人工编写的示例。`tests/fixtures/generate.py` 可重新生成这些样本，可选依赖 ReportLab、python-docx、pypdf；运行软件和 C# 测试无需安装这些工具。导出的 Word 还使用 python-docx 独立读取验证。
 
